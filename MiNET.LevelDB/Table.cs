@@ -148,24 +148,36 @@ namespace MiNET.LevelDB
 			SpanReader reader = new SpanReader(_metaIndex);
 			int indexSize = GetRestartIndexSize(ref reader);
 
+			byte[] lastKey = Array.Empty<byte>();
+
 			while (reader.Position < reader.Length - indexSize)
 			{
 				ulong shared = reader.ReadVarLong();
 				ulong nonShared = reader.ReadVarLong();
 				ulong size = reader.ReadVarLong();
 
-				if (size == 0) continue; //Weird empty keys that looks like Minecraft ignores. So let's do the same ...
+				ReadOnlySpan<byte> delta = reader.Read(0, nonShared);
 
-				//TODO: This is pretty wrong since it assumes no sharing. However, it works so far.
-				if (shared != 0) throw new Exception($"Got {shared} shared bytes for index block. We can't handle that right now.");
+				byte[] keyBytes = new byte[shared + nonShared];
 
-				ReadOnlySpan<byte> keyData = reader.Read(shared, nonShared);
+				if (shared > 0 && lastKey.Length >= (int) shared)
+				{
+					Buffer.BlockCopy(lastKey, 0, keyBytes, 0, (int) shared);
+				}
+
+				delta.CopyTo(keyBytes.AsSpan((int) shared));
+
+				lastKey = keyBytes;
+
+				if (size == 0) { continue; }
 
 				var handle = BlockHandle.ReadBlockHandle(ref reader);
 
-				if (Log.IsDebugEnabled) Log.Debug($"Key={Encoding.UTF8.GetString(keyData)}, BlockHandle={handle}");
+				string key = Encoding.UTF8.GetString(keyBytes);
 
-				result.Add(Encoding.UTF8.GetString(keyData), handle);
+				if (Log.IsDebugEnabled) Log.Debug($"Key={key}, BlockHandle={handle}");
+
+				result[key] = handle;
 			}
 
 			return result;
